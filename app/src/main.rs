@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::io::{self, StdoutLock, Write};
+use ulid::Ulid;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -21,6 +22,10 @@ enum MessageBody {
     Echo {
         msg_id: u32,
         echo: String,
+    },
+    Generate {},
+    GenerateOk {
+        id: String,
     },
 }
 
@@ -80,6 +85,25 @@ impl Node {
             }
 
             MessageBody::EchoOk { .. } => {}
+
+            MessageBody::Generate {} => {
+                let reply = Message {
+                    src: message.dest,
+                    dest: message.src,
+                    body: MessageBody::GenerateOk {
+                        id: Ulid::new().to_string(),
+                    },
+                };
+
+                serde_json::to_writer(&mut *output, &reply).unwrap();
+
+                output.write(b"\n").unwrap();
+                output.flush().unwrap();
+
+                self.next_msg_id = Some(self.next_msg_id.unwrap() + 1);
+            }
+
+            MessageBody::GenerateOk { .. } => {}
         }
     }
 }
