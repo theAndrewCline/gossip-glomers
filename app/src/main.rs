@@ -45,6 +45,7 @@ enum MessageBody {
     },
     Read {
         msg_id: u32,
+        key: Option<String>,
     },
     ReadOk {
         msg_id: u32,
@@ -59,6 +60,14 @@ enum MessageBody {
         msg_id: u32,
         in_reply_to: u32,
     },
+    Add {
+        msg_id: u32,
+        delta: u32,
+    },
+    AddOk {
+        msg_id: u32,
+        in_reply_to: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -68,15 +77,29 @@ struct Message {
     body: MessageBody,
 }
 
-struct Node {
+struct Node<'a> {
     id: String,
     neighbors: Vec<String>,
     next_msg_id: Option<u32>,
     messages: Vec<u32>,
+    output: StdoutLock<'a>,
 }
 
-impl Node {
-    fn step(&mut self, message: Message, output: &mut StdoutLock) -> () {
+impl Node<'_> {
+    fn send_message(&mut self, message: Message) -> () {
+        serde_json::to_writer(&mut self.output, &message).expect("Failed to write JSON");
+
+        self.output.write(b"\n").expect("Failed to write newline");
+        self.output.flush().expect("Failed to flush");
+
+        self.increase_msg_id();
+    }
+
+    fn increase_msg_id(&mut self) -> () {
+        self.next_msg_id = Some(self.next_msg_id.unwrap_or(0) + 1);
+    }
+
+    fn step(&mut self, message: Message) -> () {
         match message.body {
             MessageBody::Init {
                 msg_id,
@@ -96,12 +119,7 @@ impl Node {
                     },
                 };
 
-                serde_json::to_writer(&mut *output, &reply).expect("Failed to write JSON");
-
-                output.write(b"\n").expect("Failed to write newline");
-                output.flush().expect("Failed to flush");
-
-                self.next_msg_id = Some(self.next_msg_id.unwrap_or(0) + 1);
+                self.send_message(reply);
             }
 
             MessageBody::InitOk { .. } => {}
@@ -117,12 +135,7 @@ impl Node {
                     },
                 };
 
-                serde_json::to_writer(&mut *output, &reply).expect("Failed to write JSON");
-
-                output.write(b"\n").expect("Failed to write newline");
-                output.flush().expect("Failed to flush");
-
-                self.next_msg_id = Some(self.next_msg_id.unwrap_or(0) + 1);
+                self.send_message(reply);
             }
 
             MessageBody::EchoOk { .. } => {}
@@ -138,12 +151,7 @@ impl Node {
                     },
                 };
 
-                serde_json::to_writer(&mut *output, &reply).expect("Failed to write JSON");
-
-                output.write(b"\n").expect("Failed to write newline");
-                output.flush().expect("Failed to flush");
-
-                self.next_msg_id = Some(self.next_msg_id.unwrap_or(0) + 1);
+                self.send_message(reply);
             }
 
             MessageBody::GenerateOk { .. } => {}
@@ -160,12 +168,7 @@ impl Node {
                     },
                 };
 
-                serde_json::to_writer(&mut *output, &reply).expect("Failed to write JSON");
-
-                output.write(b"\n").expect("Failed to write newline");
-                output.flush().expect("Failed to flush");
-
-                self.next_msg_id = Some(self.next_msg_id.unwrap_or(0) + 1);
+                self.send_message(reply);
             }
             MessageBody::BroadcastOk { .. } => {}
 
@@ -180,12 +183,7 @@ impl Node {
                     },
                 };
 
-                serde_json::to_writer(&mut *output, &reply).expect("Failed to write JSON");
-
-                output.write(b"\n").expect("Failed to write newline");
-                output.flush().expect("Failed to flush");
-
-                self.next_msg_id = Some(self.next_msg_id.unwrap_or(0) + 1);
+                self.send_message(reply);
             }
             MessageBody::ReadOk { .. } => {}
 
@@ -210,21 +208,30 @@ impl Node {
                     },
                 };
 
-                serde_json::to_writer(&mut *output, &reply).expect("Failed to write JSON");
-
-                output.write(b"\n").expect("Failed to write newline");
-                output.flush().expect("Failed to flush");
-
-                self.next_msg_id = Some(self.next_msg_id.unwrap_or(0) + 1);
+                self.send_message(reply);
             }
             MessageBody::TopologyOk { .. } => {}
+
+            MessageBody::Add { msg_id, .. } => {
+                let reply = Message {
+                    src: self.id.clone(),
+                    dest: message.src,
+                    body: MessageBody::AddOk {
+                        msg_id: self.next_msg_id.unwrap_or(0),
+                        in_reply_to: msg_id,
+                    },
+                };
+
+                self.send_message(reply);
+            }
+            MessageBody::AddOk { .. } => {}
         }
     }
 }
 
 fn main() {
     let stdio = io::stdin().lock();
-    let mut stdout = io::stdout().lock();
+    let stdout = io::stdout().lock();
 
     let inputs = serde_json::Deserializer::from_reader(stdio).into_iter::<Message>();
 
@@ -233,11 +240,12 @@ fn main() {
         neighbors: Vec::new(),
         next_msg_id: None,
         messages: Vec::new(),
+        output: stdout,
     };
 
     for input in inputs {
         let message = input.expect("Failed to parse JSON");
 
-        state.step(message, &mut stdout);
+        state.step(message);
     }
 }
